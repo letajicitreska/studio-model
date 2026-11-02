@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<style>body{margin:0}[hidden]{display:none!important}</style><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Studio 3D model</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root {
+    --bg: #DCE6EC;
+    --panel: rgba(251,251,249,.92);
+    --ink: #22262B;
+    --muted: #5F6866;
+    --line: #CFD2CD;
+    --accent: #A9702A;
+    --accent-ink: #FFFFFF;
+    --font-ui: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --panel: rgba(28,32,31,.9); --ink: #E7E9E5; --muted: #A2ABA6; --line: #3A413E; --accent: #D9A25C; --accent-ink: #1B1D1C;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --panel: rgba(28,32,31,.9); --ink: #E7E9E5; --muted: #A2ABA6; --line: #3A413E; --accent: #D9A25C; --accent-ink: #1B1D1C;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); overflow: hidden; }
+  #stage { position: fixed; inset: 0; touch-action: none; }
+  #stage canvas { display: block; width: 100%; height: 100%; outline: none; }
+  .ui {
+    position: fixed; left: 0; right: 0; z-index: 3; pointer-events: none;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .top { top: 0; padding-top: calc(env(safe-area-inset-top, 0px) + 10px); }
+  .bottom { bottom: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); display: grid; gap: 8px; }
+  .card { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .title { display: inline-block; padding: 8px 14px; }
+  .title h1 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
+  .title p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); max-width: 46ch; line-height: 1.35; }
+  .row { display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .row::-webkit-scrollbar { display: none; }
+  .row .lbl { flex: 0 0 auto; align-self: center; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 6px 0 8px; }
+  button.chip {
+    flex: 0 0 auto; font: 600 14px var(--font-ui); color: var(--ink); background: transparent;
+    border: 1px solid var(--line); border-radius: 99px; height: 40px; padding: 0 14px; cursor: pointer; white-space: nowrap;
+  }
+  button.chip:hover { border-color: var(--accent); }
+  button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.chip[aria-pressed="true"], button.chip[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .note { font-size: 11.5px; color: var(--muted); padding: 0 4px; pointer-events: none; text-shadow: 0 0 6px var(--bg); }
+  #fallback { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--ink); }
+</style>
+<div id="stage"></div>
+<div id="fallback">Tenhle prohlížeč nezobrazí 3D scénu (chybí WebGL).</div>
+<div class="ui top">
+  <div class="card title">
+    <h1>Studio – 3D model</h1>
+    <p id="hint">Táhni prstem = otáčení, dva prsty = přiblížení.</p>
+  </div>
+</div>
+<div class="ui bottom">
+  <div class="note">Rozměry z náčrtu. Barvy a materiály jsou jen orientační, soused je naznačený. Slunce svítí z jihu, sever je na straně oken.</div>
+  <div class="card row" id="views" role="group" aria-label="Pohledy"><span class="lbl">Pohled</span></div>
+  <div class="card row" id="toggles" role="group" aria-label="Volby"><span class="lbl">Zapnout</span></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  var stage = document.getElementById('stage');
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+  } catch (e) {
+    document.getElementById('fallback').style.display = 'flex';
+    return;
+  }
+  var V3 = THREE.Vector3;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = .88;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  stage.appendChild(renderer.domElement);
+
+  /* ---------- rozměry (m) ---------- */
+  var W = 5.5, L = 9.0, T = 0.3, WH = 3.2, ZP = 7.5, PITCH = Math.PI * 35 / 180;       // ZP = začátek přístavby
+  var RIDGE = WH + (W / 2) * Math.tan(PITCH), SQ = 1 / Math.cos(PITCH);
+  var VR = (W / 2) * SQ;                                    // délka svahu od okapu k hřebeni
+  var KB = 3.3;                                             // kumbál 0..3.3, koupelna 3.3..5.5
+
+  var scene = new THREE.Scene();
+  var skyDay = new THREE.Color('#CFE2EE'), skyNight = new THREE.Color('#1B2230');
+  var skyDayTex = skyTex();
+  scene.background = skyDayTex;
+  scene.fog = new THREE.Fog('#E3EDEA', 60, 130);
+  var camera = new THREE.PerspectiveCamera(45, 1, 0.05, 120);
+
+  /* ---------- textury ---------- */
+  function shade(hex, k) {
+    var c = new THREE.Color(hex);
+    c.r = Math.min(1, c.r * k); c.g = Math.min(1, c.g * k); c.b = Math.min(1, c.b * k);
+    return '#' + c.getHexString();
+  }
+  function woodTex(base, seed, variance, boards, o) {
+    o = o || {};
+    var S = 1024, n = boards || 8, bh = S / n, s = seed, TAU = Math.PI * 2;
+    var rnd = function () { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    var c = document.createElement('canvas'); c.width = c.height = S;
+    var b = document.createElement('canvas'); b.width = b.height = S;
+    var g = c.getContext('2d'), gb = b.getContext('2d');
+    gb.fillStyle = '#9a9a9a'; gb.fillRect(0, 0, S, S);
+    var warm = o.warm == null ? 1 : o.warm;
+    for (var i = 0; i < n; i++) {
+      var y0 = i * bh, k0 = 1 + (rnd() - .5) * variance;
+      var grd = g.createLinearGradient(0, y0, 0, y0 + bh);
+      grd.addColorStop(0, shade(base, k0 * 1.04)); grd.addColorStop(.5, shade(base, k0 * .97)); grd.addColorStop(1, shade(base, k0 * 1.02));
+      g.fillStyle = grd; g.fillRect(0, y0, S, bh);
+      /* letokruhy – dlouhé vlnité linky (periodické, aby textura navazovala) */
+      var lines = 26 + (rnd() * 14 | 0);
+      for (var k = 0; k < lines; k++) {
+        var yy = y0 + 2 + rnd() * (bh - 4), amp = (.6 + rnd() * 2.2) * (bh / 64), per = 1 + (rnd() * 3 | 0), ph = rnd() * TAU;
+        var dark = rnd() < .72, a = dark ? .03 + rnd() * .08 : .03 + rnd() * .06;
+        g.strokeStyle = dark ? 'rgba(' + (74 * warm | 0) + ',42,14,' + a + ')' : 'rgba(255,236,200,' + a + ')';
+        g.lineWidth = .5 + rnd() * 1.4;
+        g.beginPath();
+        for (var x = 0; x <= S; x += 16) {
+          var yv = yy + amp * Math.sin(TAU * per * x / S + ph);
+          if (x === 0) g.moveTo(x, yv); else g.lineTo(x, yv);
+        }
+        g.stroke();
+        if (dark && rnd() < .5) {
+          gb.strokeStyle = 'rgba(40,40,40,' + (a * 2) + ')'; gb.lineWidth = g.lineWidth;
+          gb.beginPath();
+          for (x = 0; x <= S; x += 16) { yv = yy + amp * Math.sin(TAU * per * x / S + ph); if (x === 0) gb.moveTo(x, yv); else gb.lineTo(x, yv); }
+          gb.stroke();
+        }
+      }
+      /* suk */
+      if (rnd() < (o.knots == null ? .28 : o.knots)) {
+        var kx = 120 + rnd() * (S - 240), ky = y0 + bh * (.3 + rnd() * .4), kr = bh * (.12 + rnd() * .1);
+        for (var r = kr; r > 1; r -= 2) {
+          g.strokeStyle = 'rgba(60,32,10,' + (.25 + (kr - r) / kr * .3) + ')'; g.lineWidth = 1;
+          g.beginPath(); g.ellipse(kx, ky, r * 1.7, r * .8, 0, 0, TAU); g.stroke();
+        }
+        g.fillStyle = 'rgba(50,26,8,.55)'; g.beginPath(); g.ellipse(kx, ky, kr * .35, kr * .2, 0, 0, TAU); g.fill();
+        gb.fillStyle = 'rgba(30,30,30,.7)'; gb.beginPath(); gb.ellipse(kx, ky, kr * 1.1, kr * .55, 0, 0, TAU); gb.fill();
+      }
+      /* spára mezi prkny + zkosená hrana */
+      g.fillStyle = 'rgba(40,22,8,.42)'; g.fillRect(0, y0, S, 2.5);
+      g.fillStyle = 'rgba(255,238,205,.22)'; g.fillRect(0, y0 + 2.5, S, 2);
+      g.fillStyle = 'rgba(40,22,8,.12)'; g.fillRect(0, y0 + bh - 4, S, 4);
+      gb.fillStyle = '#202020'; gb.fillRect(0, y0, S, 3.5);
+      gb.fillStyle = '#b8b8b8'; gb.fillRect(0, y0 + 3.5, S, 2.5);
+      /* styk prken */
+      if (o.joints !== false && rnd() < .7) {
+        var jx = rnd() * (S - 6);
+        g.fillStyle = 'rgba(40,22,8,.5)'; g.fillRect(jx, y0, 2, bh);
+        gb.fillStyle = '#202020'; gb.fillRect(jx, y0, 3, bh);
+      }
+    }
+    var mk = function (cv, srgb) {
+      var t = new THREE.CanvasTexture(cv);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+      if (srgb) t.encoding = THREE.sRGBEncoding;
+      return t;
+    };
+    return { map: mk(c, true), bump: mk(b, false) };
+  }
+  function woodMat(base, seed, variance, boards, rough, o) {
+    var t = woodTex(base, seed, variance, boards, o);
+    return std({ map: t.map, bumpMap: t.bump, bumpScale: (o && o.bump) || 1.2, roughness: rough });
+  }
+  function skyTex() {
+    var c = document.createElement('canvas'); c.width = 4; c.height = 256;
+    var g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, '#8FB8DA'); gr.addColorStop(.55, '#C4DDEC'); gr.addColorStop(1, '#EEF3EC');
+    g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+    var t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+  }
+  function grassTex() {
+    var c = document.createElement('canvas'); c.width = 256; c.height = 256;
+    var g = c.getContext('2d'); g.fillStyle = '#8DAE72'; g.fillRect(0, 0, 256, 256);
+    var s = 7; var rnd = function () { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    for (var i = 0; i < 2200; i++) {
+      g.fillStyle = 'rgba(' + (70 + rnd() * 50 | 0) + ',' + (110 + rnd() * 60 | 0) + ',' + (50 + rnd() * 40 | 0) + ',.35)';
+      g.fillRect(rnd() * 256, rnd() * 256, 2, 2);
+    }
+    var t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(30, 30); t.encoding = THREE.sRGBEncoding;
+    return t;
+  }
+  function std(o) { return new THREE.MeshStandardMaterial(o); }
+  var M = {
+    wall:   woodMat('#D2AB74', 11, .16, 6, .78, { bump: .7 }),
+    floor:  woodMat('#B68450', 23, .16, 6, .5, { bump: .5, knots: .18 }),
+    deck:   woodMat('#C9A06A', 31, .2, 10, .85, { bump: 1.6 }),
+    raft:   woodMat('#8F6638', 41, .14, 4, .85, { bump: 1.4, knots: .4 }),
+    plaster:std({ color: '#E7E1D4', roughness: .95 }),
+    white:  std({ color: '#F0ECE2', roughness: .95 }),
+    roof:   std({ color: '#2C3136', roughness: .85 }),
+    found:  std({ color: '#9C9A94', roughness: 1 }),
+    frame:  std({ color: '#2F3438', roughness: .6 }),
+    door:   std({ color: '#6D4B2C', roughness: .7 }),
+    glass:  std({ color: '#BFDFF0', transparent: true, opacity: .28, roughness: .1, depthWrite: false }),
+    mirror: std({ color: '#CFE0E6', roughness: .06, metalness: .35 }),
+    curtain:std({ color: '#B9A98E', roughness: 1, side: THREE.DoubleSide }),
+    stove:  std({ color: '#40454A', roughness: .6 }),
+    chair:  std({ color: '#474D53', roughness: .7 }),
+    mat:    std({ color: '#C9D4DA', roughness: 1 }),
+    pillow: std({ color: '#F2EEE6', roughness: 1 }),
+    fridge: std({ color: '#E8EBEC', roughness: .4 }),
+    skin:   std({ color: '#E0B393', roughness: .7 }),
+    hair:   std({ color: '#4A3322', roughness: .9 }),
+    sweater:std({ color: '#B04A26', roughness: .95 }),
+    jeans:  std({ color: '#2E3E56', roughness: .9 }),
+    shoe:   std({ color: '#2A2A2C', roughness: .7 }),
+    paving: std({ color: '#9B5A47', roughness: 1 }),
+    tileR:  std({ color: '#7E4B3D', roughness: .9 }),
+    saunaW: woodMat('#6A4A30', 57, .14, 7, .8, { bump: 1.2, knots: .2 }),
+    water:  std({ color: '#7DB4C8', roughness: .08, metalness: .1 }),
+    spruce: std({ color: '#2F5A3E', roughness: 1 }),
+    leaf3:  std({ color: '#93A24C', roughness: 1 }),
+    leaf:   std({ color: '#5A8744', roughness: 1 }),
+    leaf2:  std({ color: '#6E9650', roughness: 1 }),
+    bark:   std({ color: '#6B5239', roughness: 1 }),
+    light:  std({ color: '#C79E66', roughness: .8 }),
+    neighbor:std({ color: '#CFCAC0', roughness: 1 }),
+    ground: std({ map: grassTex(), roughness: 1 }),
+    tile:   std({ color: '#CBD2D4', roughness: .6 })
+  };
+
+  /* ---------- pomocné funkce ---------- */
+  function mapUV(g, roofMode) {
+    var p = g.attributes.position, n = g.attributes.normal, uv = g.attributes.uv;
+    for (var i = 0; i < p.count; i++) {
+      var ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i)), az = Math.abs(n.getZ(i)), u, v;
+      if (ax >= ay && ax >= az) { u = p.getZ(i); v = p.getY(i); }
+      else if (ay >= az) { if (roofMode) { u = p.getX(i); v = p.getZ(i); } else { u = p.getZ(i); v = p.getX(i); } }
+      else { u = p.getX(i); v = p.getY(i); }
+      uv.setXY(i, u, v);
+    }
+  }
+  /* box v souřadnicích rodiče; mats = jeden materiál nebo pole 6 (+x,-x,+y,-y,+z,-z) */
+  function box(parent, x0, x1, y0, y1, z0, z1, mats, roofMode, noShadow) {
+    var g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
+    g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    mapUV(g, roofMode);
+    var m = new THREE.Mesh(g, mats);
+    m.castShadow = !noShadow; m.receiveShadow = true;
+    parent.add(m); return m;
+  }
+  /* obdélník minus otvory; otvor = [u0,u1,v0,v1] */
+  function slice(u0, u1, v0, v1, holes) {
+    var us = [u0, u1]; holes.forEach(function (h) { us.push(h[0], h[1]); });
+    var U = us.filter(function (v, i) { return us.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
+    var out = [];
+    for (var i = 0; i < U.length - 1; i++) {
+      var a = U[i], b = U[i + 1]; if (b - a < 1e-6) continue;
+      var hs = holes.filter(function (h) { return h[0] <= a + 1e-6 && h[1] >= b - 1e-6; }).sort(function (p, q) { return p[2] - q[2]; });
+      var cur = v0;
+      hs.forEach(function (h) { if (h[2] > cur) out.push([a, b, cur, h[2]]); cur = Math.max(cur, h[3]); });
+      if (cur < v1) out.push([a, b, cur, v1]);
+    }
+    return out;
+  }
+  function cyl(parent, p, q, r, mat) {
+    var d = new V3().subVectors(q, p);
+    var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), mat);
+    m.position.copy(p).addScaledVector(d, .5);
+    m.quaternion.setFromUnitVectors(new V3(0, 1, 0), d.clone().normalize());
+    m.castShadow = true; parent.add(m); return m;
+  }
+  function glassPlane(parent, w, h, pos, rotY) {
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), M.glass);
+    m.position.copy(pos); m.rotation.y = rotY || 0; parent.add(m); return m;
+  }
+
+  var world = new THREE.Group(); scene.add(world);
+  var roofG = new THREE.Group(); world.add(roofG);
+  var floorTargets = [];
+
+  var gHouse = new THREE.Group(), gSauna = new THREE.Group(), gGarden = new THREE.Group(), gPergola = new THREE.Group();
+  world.add(gHouse, gSauna, gGarden, gPergola);
+  var GR = { house: gHouse, sauna: gSauna, garden: gGarden, pergola: gPergola };
+
+  /* ---------- terén, základ, soused ---------- */
+  var ground = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), M.ground);
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.2; ground.receiveShadow = true; world.add(ground);
+  box(world, -T, W + T, -0.2, -0.005, -T, L + T, M.found);
+  var sal = box(world, 0, W, -0.2, 0, 0, ZP, [M.floor, M.floor, M.floor, M.floor, M.floor, M.floor]);
+  floorTargets.push(sal);
+  box(gHouse, -6.6, -0.8, -0.2, 4.0, -17.8, 4.5, M.neighbor);   // soused: dům s ~4 m zdí od našeho domu zhruba do poloviny studia
+
+  /* ---------- boční stěny ---------- */
+  var SILL = .45, WTOP = 2.9;
+  var wallR = slice(0, L, 0, WH, [[1.2, 2.7, SILL, WTOP], [3.0, 4.5, SILL, WTOP], [4.95, 5.85, 0, 2.1]]);
+  wallR.forEach(function (r) {
+    box(world, W, W + T, r[2], r[3], r[0], r[1], [M.plaster, M.wall, M.plaster, M.plaster, M.plaster, M.plaster]);
+  });
+  box(world, -T, 0, 0, WH, 0, L, [M.plaster, M.plaster, M.plaster, M.plaster, M.plaster, M.plaster]);   // slepá stěna se zrcadly: světlá omítka
+  /* za kamny nehořlavý obklad / omítka: kus stěny v rohu u domu */
+  box(world, 4.0, W, 0, 2.7, .005, .02, M.plaster, false, true);
+  box(world, W - .02, W - .005, 0, 2.7, .02, 1.2, M.plaster, false, true);
+
+  /* velká okna s hlubokým parapetem na sezení (sklo u vnějšího líce zdi) */
+  [[1.2, 2.7], [3.0, 4.5]].forEach(function (zz) {
+    var z0 = zz[0], z1 = zz[1], zm = (z0 + z1) / 2, x0 = W + T - .13, x1 = W + T - .06, b = .06;
+    box(world, x0, x1, SILL, SILL + b, z0, z1, M.frame);
+    box(world, x0, x1, WTOP - b, WTOP, z0, z1, M.frame);
+    box(world, x0, x1, SILL, WTOP, z0, z0 + b, M.frame);
+    box(world, x0, x1, SILL, WTOP, z1 - b, z1, M.frame);
+    box(world, x0, x1, SILL, WTOP, zm - .03, zm + .03, M.frame);
+    glassPlane(world, z1 - z0 - .1, WTOP - SILL - .1, new V3(W + T - .095, (SILL + WTOP) / 2, zm), Math.PI / 2);
+    box(world, W, W + T - .06, SILL - .05, SILL, z0, z1, M.light);                          // dřevěný parapet
+    box(world, W, W + T - .14, SILL, SILL + .07, z0 + .03, z1 - .03, M.mat, false, true);   // polštář na sezení
+    box(world, W, W + T, SILL, WTOP, z0 - .0, z0 + .001, M.wall, false, true);
+  });
+  box(world, W + T - .12, W + T - .06, 0, 2.1, 4.95, 5.85, M.door);          // vstupní dveře
+  box(world, W + T - .06, W + T - .03, 1.0, 1.04, 5.62, 5.78, M.frame, false, true);
+
+  /* ---------- štíty ---------- */
+  function gable(z0, z1, thick, mat, holes) {
+    var s = new THREE.Shape();
+    var pts = thick ? [[-T, 0], [W + T, 0], [W + T, WH], [W, WH], [W / 2, RIDGE], [0, WH], [-T, WH]]
+                    : [[0, 0], [W, 0], [W, WH], [W / 2, RIDGE], [0, WH]];
+    s.moveTo(pts[0][0], pts[0][1]); for (var i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]); s.closePath();
+    (holes || []).forEach(function (h) {
+      var p = new THREE.Path(); p.moveTo(h[0], h[2]); p.lineTo(h[1], h[2]); p.lineTo(h[1], h[3]); p.lineTo(h[0], h[3]); p.closePath(); s.holes.push(p);
+    });
+    var g = new THREE.ExtrudeGeometry(s, { depth: z1 - z0, bevelEnabled: false });
+    g.translate(0, 0, z0);
+    var m = new THREE.Mesh(g, [mat, mat]); m.castShadow = m.receiveShadow = true; world.add(m); return m;
+  }
+  var bathWin = [4.15, 4.65, 1.5, 1.9], mezWin = [2.0, 3.5, 2.95, 4.15];
+  gable(-T, 0, true, M.plaster, []);
+  gable(0, .03, false, M.wall, []);
+  gable(L, L + T, true, M.plaster, [bathWin, mezWin]);
+  gable(L - .03, L, false, M.wall, [bathWin, mezWin]);
+  [bathWin, mezWin].forEach(function (wn) {                  // okénko koupelny a okno mezonetu
+    var x0 = wn[0], x1 = wn[1], y0 = wn[2], y1 = wn[3], z0 = L + .12, z1 = L + .18, b = .04;
+    box(world, x0, x1, y0, y0 + b, z0, z1, M.frame); box(world, x0, x1, y1 - b, y1, z0, z1, M.frame);
+    box(world, x0, x0 + b, y0, y1, z0, z1, M.frame); box(world, x1 - b, x1, y0, y1, z0, z1, M.frame);
+    glassPlane(world, x1 - x0, y1 - y0, new V3((x0 + x1) / 2, (y0 + y1) / 2, L + .15), 0);
+    if (x1 - x0 > 1) box(world, (x0 + x1) / 2 - .02, (x0 + x1) / 2 + .02, y0, y1, z0, z1, M.frame);
+  });
+
+  /* ---------- přístavba: kumbál, koupelna, mezonet ---------- */
+  box(world, 0, W, 2.4, 2.6, ZP, L, [M.wood || M.wall, M.wall, M.floor, M.white, M.wall, M.wall]);
+  var mezTop = new THREE.Mesh(new THREE.PlaneGeometry(W, L - ZP), M.floor);
+  mezTop.rotation.x = -Math.PI / 2; mezTop.position.set(W / 2, 2.601, (ZP + L) / 2); mezTop.visible = false; world.add(mezTop);
+  floorTargets.push(mezTop);
+  var fr = slice(0, W, 0, 2.4, [[0.9, 1.7, 0, 2.0], [3.8, 4.6, 0, 2.0]]);
+  fr.forEach(function (r) { box(world, r[0], r[1], r[2], r[3], ZP, ZP + .1, [M.white, M.white, M.white, M.white, M.white, M.wall]); });
+  box(world, KB, KB + .1, 0, 2.4, ZP + .1, L, M.white);
+  box(world, .9, 1.7, 0, 2.0, ZP + .03, ZP + .07, M.door);
+  box(world, 3.8, 4.6, 0, 2.0, ZP + .03, ZP + .07, M.door);
+  [[0, KB, M.floor], [KB + .1, W, M.tile]].forEach(function (f) {
+    var p = new THREE.Mesh(new THREE.PlaneGeometry(f[1] - f[0], L - ZP - .1), f[2]);
+    p.rotation.x = -Math.PI / 2; p.position.set((f[0] + f[1]) / 2, .002, (ZP + .1 + L) / 2); p.receiveShadow = true; world.add(p);
+  });
+  /* věšáky na stěně kumbálu */
+  for (var h = 0; h < 8; h++) {
+    var hx = 1.85 + h * .2;
+    cyl(world, new V3(hx, 1.75, ZP - .0), new V3(hx, 1.75, ZP - .1), .016, M.frame);
+  }
+  box(world, 1.75, 3.3, 1.78, 1.84, ZP - .03, ZP, M.raft, false, true);
+  /* zábradlí mezonetu (výška sleduje sklon střechy, aby neprorážela krov) */
+  var rl = new THREE.Group(); world.add(rl);
+  function railH(x) { return Math.min(1.0, WH - 2.6 + Math.min(x, W - x) - .12); }
+  var prev = null;
+  for (var px = .5; px <= W - .45; px += .45) {
+    var hh = railH(px); if (hh < .25) continue;
+    box(rl, px - .02, px + .02, 2.6, 2.6 + hh, ZP + .03, ZP + .07, M.light);
+    var top = new V3(px, 2.6 + hh, ZP + .05), mid = new V3(px, 2.6 + hh / 2, ZP + .05);
+    if (prev) { cyl(rl, prev.top, top, .022, M.light); cyl(rl, prev.mid, mid, .015, M.light); }
+    prev = { top: top, mid: mid };
+  }
+  /* žebřík */
+  var lad = new THREE.Group(); world.add(lad);
+  [0.12, 0.42].forEach(function (x) { cyl(lad, new V3(x, 0, ZP - .65), new V3(x, 2.85, ZP - .02), .03, M.light); });
+  for (var r = 1; r <= 10; r++) {
+    var t = r / 11, zr = (ZP - .65) + t * (.63), yr = t * 2.85;
+    cyl(lad, new V3(.12, yr, zr), new V3(.42, yr, zr), .02, M.light);
+  }
+  /* vybavení mezonetu */
+  var mez = new THREE.Group(); world.add(mez);
+  box(mez, .4, 2.3, 2.6, 2.78, 8.0, 8.9, M.mat);   box(mez, .4, .75, 2.78, 2.86, 8.2, 8.7, M.pillow);
+  box(mez, 3.2, 5.1, 2.6, 2.78, 8.0, 8.9, M.mat);  box(mez, 4.75, 5.1, 2.78, 2.86, 8.2, 8.7, M.pillow);
+  box(mez, 2.45, 3.05, 2.6, 3.45, 8.3, 8.9, M.fridge);
+  mez.visible = false;
+
+  /* ---------- kamna a komín ---------- */
+  box(world, W - .6, W, 0, 1.1, 0.0, .6, M.stove);
+  cyl(world, new V3(W - .3, 1.1, .3), new V3(W - .3, RIDGE + .9, .3), .09, M.stove);
+
+  /* ---------- zrcadla a závěs na slepé stěně ---------- */
+  var mirror = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 1.9), M.mirror);
+  mirror.rotation.y = Math.PI / 2; mirror.position.set(.015, 1.25, 3.4); world.add(mirror);
+  cyl(world, new V3(.1, 2.5, 1.0), new V3(.1, 2.5, 5.8), .015, M.frame);
+  var cg = new THREE.PlaneGeometry(4.8, 2.4, 120, 1);
+  cg.translate(2.4, 0, 0);
+  (function () { var p = cg.attributes.position; for (var i = 0; i < p.count; i++) p.setZ(i, .05 * Math.sin(p.getX(i) * 15)); cg.computeVertexNormals(); })();
+  cg.rotateY(Math.PI / 2);
+  var curtain = new THREE.Mesh(cg, M.curtain);
+  curtain.position.set(.14, 1.28, 5.8); curtain.scale.z = .14; curtain.castShadow = true; world.add(curtain);
+  var curtainT = 0.14, curtainWant = 0.14;                  // měřítko záclony: .14 = odtažená, 1 = zatažená
+
+  /* ---------- židle v elipse ---------- */
+  var chairs = new THREE.Group(); world.add(chairs);
+  (function () {
+    var cx = 2.75, cz = 4.1, a = 2.1, b = 2.6, N = 16;
+    for (var i = 0; i < N; i++) {
+      var ang = i / N * Math.PI * 2, x = cx + a * Math.cos(ang), z = cz + b * Math.sin(ang);
+      var g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = Math.atan2(cx - x, cz - z);
+      box(g, -.21, .21, .44, .48, -.21, .21, M.chair);
+      box(g, -.21, .21, .5, .86, -.22, -.19, M.chair);
+      [[-.19, -.19], [.19, -.19], [-.19, .19], [.19, .19]].forEach(function (l) { box(g, l[0] - .015, l[0] + .015, 0, .44, l[1] - .015, l[1] + .015, M.chair); });
+      chairs.add(g);
+    }
+  })();
+  chairs.visible = false;
+
+  /* ---------- postava pro měřítko ---------- */
+  var person = new THREE.Group();
+  (function () {
+    function add(geo, mat, x, y, z, rx, rz) {
+      var m = new THREE.Mesh(geo, mat); m.position.set(x, y, z);
+      if (rx) m.rotation.x = rx; if (rz) m.rotation.z = rz;
+      m.castShadow = true; person.add(m); return m;
+    }
+    [-.095, .095].forEach(function (x) {
+      add(new THREE.BoxGeometry(.1, .07, .27), M.shoe, x, .035, .04);                         // boty
+      add(new THREE.CylinderGeometry(.062, .052, .86, 12), M.jeans, x, .5, 0);                // nohavice
+    });
+    add(new THREE.CapsuleGeometry(.14, .1, 4, 14), M.jeans, 0, .93, 0).scale.set(1, 1, .72); // pánev
+    var torso = add(new THREE.CylinderGeometry(.17, .17, .6, 16), M.sweater, 0, 1.18, 0); torso.scale.z = .66;
+    var sh = add(new THREE.SphereGeometry(.18, 16, 10), M.sweater, 0, 1.45, 0); sh.scale.set(1.05, .45, .66);
+    [-1, 1].forEach(function (d) {
+      add(new THREE.CapsuleGeometry(.045, .5, 4, 10), M.sweater, d * .225, 1.2, 0, 0, d * .06);  // paže
+      add(new THREE.SphereGeometry(.045, 10, 8), M.skin, d * .25, .88, 0);                       // ruce
+    });
+    add(new THREE.CylinderGeometry(.05, .055, .09, 10), M.skin, 0, 1.52, 0);                    // krk
+    var hd = add(new THREE.SphereGeometry(.105, 20, 16), M.skin, 0, 1.64, 0); hd.scale.set(.92, 1.12, 1);
+    var hr = add(new THREE.SphereGeometry(.112, 20, 14, 0, Math.PI * 2, 0, Math.PI * .55), M.hair, 0, 1.655, -.012); hr.scale.set(.94, 1.1, 1.02);
+    person.position.set(3.6, 0, 4.9);
+  })();
+  person.visible = false; world.add(person);
+
+  /* ---------- hlavní dům (hrubě, vykrojený): v zářezu u hranice pozemku je terasa s balkonem ---------- */
+  (function (world) {
+    var HZ1 = -3.9, HZR = HZ1 - 1.5, HZ0 = HZ1 - 11.8, HX0 = -0.3, HX1 = HX0 + 9.85, XN = 3.0, EAVE = 6.2, RID = 8.8;
+    box(world, XN, HX1, -0.2, EAVE, HZ0, HZ1, M.plaster);                // křídlo, které vystupuje směrem ke studiu
+    box(world, HX0, XN, -0.2, EAVE, HZ0, HZR, M.plaster);                // část se zářezem (zapuštěná fasáda)
+    function roofPrism(xa, xb, za, zb) {
+      var half = (zb - za) / 2 + .3, rise = RID - EAVE - .05, hh = half * (rise / 5.95);
+      var sh = new THREE.Shape(); sh.moveTo(-half, EAVE - .05); sh.lineTo(half, EAVE - .05); sh.lineTo(0, EAVE - .05 + hh); sh.closePath();
+      var rg = new THREE.ExtrudeGeometry(sh, { depth: xb - xa + .3, bevelEnabled: false });
+      rg.rotateY(-Math.PI / 2); rg.translate(xb + .15, 0, (za + zb) / 2);
+      var rm = new THREE.Mesh(rg, M.tileR); rm.castShadow = true; rm.receiveShadow = true; world.add(rm);
+    }
+    roofPrism(XN, HX1, HZ0, HZ1); roofPrism(HX0, XN, HZ0, HZR);
+    /* dvě okna na zapuštěné fasádě: francouzské dole pod balkonem a okno/dveře nahoře za balkonem */
+    function win(x0, x1, y0, y1) { box(world, x0, x1, y0, y1, HZR - .03, HZR + .01, M.frame, false, true); box(world, x0 + .06, x1 - .06, y0 + .06, y1 - .06, HZR - .04, HZR + .02, M.glass, false, true); }
+    win(1.0, 2.3, 0, 2.2); win(1.0, 2.3, 3.4, 5.2);
+    /* dolní terasa se schody (prkna) na hranici pozemku a kovový balkon se dřevěným štítem nad ní */
+    var DX0 = HX0, DX1 = 2.9, DZ1 = HZR + 4.5;
+    box(world, DX0, DX1, -0.2, 0.35, HZR, DZ1, M.deck, false);
+    box(world, DX1, DX1 + .35, -0.2, 0.18, DZ1 - 2.4, DZ1 - .6, M.deck, false); box(world, DX1 + .35, DX1 + .7, -0.2, 0.09, DZ1 - 2.4, DZ1 - .6, M.deck, false);   // schody do boku
+    var by = 3.2, bz1 = HZR + 1.35;
+    box(world, DX0, DX1, by, by + .12, HZR, bz1, M.deck, false);
+    [[DX0 + .02, bz1], [DX1 - .1, bz1]].forEach(function (p) { box(world, p[0], p[0] + .08, .35, by, p[1] - .08, p[1], M.frame, false, true); });
+    for (var i = 0; i <= 16; i++) { var xx = DX0 + (DX1 - DX0 - .02) * i / 16; box(world, xx, xx + .02, by + .12, by + 1.1, bz1 - .03, bz1, M.frame, false, true); }
+    box(world, DX0, DX1, by + 1.08, by + 1.12, bz1 - .04, bz1 + .01, M.frame, false, true);
+    box(world, DX0, DX0 + .05, by + .12, by + 2.15, HZR, HZR + .05, M.frame, false, true); box(world, DX0, DX0 + .05, by + .12, by + 2.15, bz1 - .05, bz1, M.frame, false, true);
+    box(world, DX0, DX0 + .05, by + 2.1, by + 2.15, HZR, bz1, M.frame, false, true);
+    for (var k = 0; k < 9; k++) { var zz = HZR + .1 + k * .13; box(world, DX0 + .01, DX0 + .05, by + .15, by + 2.1, zz, zz + .09, M.raft, false, true); }   // dřevěný štít z latí u hranice
+    box(world, DX0 - .5, 9.0, -0.2, -0.01, HZ1 - .1, -0.4, M.paving, false, true);                         // zpevněná plocha mezi domem a studiem
+  })(gHouse);
+
+  /* ---------- sauna (samostatná budova) a terasa naproti oknům sálu ---------- */
+  (function (world) {
+    var TX0 = 7.0, TX1 = 11.6, TZ0 = 1.2, TZ1 = 6.2;           // terasa ~15 m², nízko nad trávníkem
+    box(world, TX0, TX1, -0.2, 0.05, TZ0, TZ1, M.deck, false);
+    box(world, W + T, TX0, -0.2, -0.01, -.3, L + .3, M.found, false, true);   // chodník 1,2 m podél studia
+    /* sauna: kabina v úrovni kamen, dveře na terasu */
+    var sx0 = 9.3, sx1 = 11.8, sz0 = -2.6, sz1 = 1.0, sh = 2.4;   // sauna 3,5 m od stěny studia
+    box(world, sx0 - .1, sx1 + .1, -0.2, 0.05, sz0 - .1, sz1, M.found);
+    box(world, sx0, sx1, 0.05, sh, sz0, sz1 - .05, M.saunaW);
+    var sr = new THREE.Mesh(new THREE.BoxGeometry(sx1 - sx0 + .5, .1, sz1 - sz0 + .5), M.roof);   // pultová střecha
+    sr.position.set((sx0 + sx1) / 2, sh + .22, (sz0 + sz1) / 2 + .1); sr.rotation.z = .1; sr.castShadow = true; world.add(sr);
+    box(world, 9.45, 10.35, 0.05, 2.0, sz1 - .08, sz1 - .03, M.glass);           // prosklené dveře
+    box(world, 9.4, 9.45, 0.05, 2.02, sz1 - .09, sz1 - .02, M.frame); box(world, 10.35, 10.4, 0.05, 2.02, sz1 - .09, sz1 - .02, M.frame);
+    box(world, 9.4, 10.4, 2.0, 2.05, sz1 - .09, sz1 - .02, M.frame);
+    /* dvoukřídlé francouzské okno směrem ke studiu (delší strana sauny je rovnoběžná se studiem) */
+    box(world, sx0 - .04, sx0 + .01, .05, 2.15, -1.9, -.1, M.glass, false, true);
+    box(world, sx0 - .05, sx0 + .01, .05, 2.15, -1.94, -1.9, M.frame, false, true); box(world, sx0 - .05, sx0 + .01, .05, 2.15, -.1, -.06, M.frame, false, true);
+    box(world, sx0 - .05, sx0 + .01, .05, 2.15, -1.02, -.98, M.frame, false, true); box(world, sx0 - .05, sx0 + .01, 2.11, 2.15, -1.94, -.06, M.frame, false, true);
+    /* dvoukřídlé francouzské okno směrem ke studiu (delší strana sauny je rovnoběžná se studiem) */
+    box(world, sx0 - .04, sx0 + .01, .05, 2.15, -1.9, -.1, M.glass, false, true);
+    box(world, sx0 - .05, sx0 + .01, .05, 2.15, -1.94, -1.9, M.frame, false, true); box(world, sx0 - .05, sx0 + .01, .05, 2.15, -.1, -.06, M.frame, false, true);
+    box(world, sx0 - .05, sx0 + .01, .05, 2.15, -1.02, -.98, M.frame, false, true); box(world, sx0 - .05, sx0 + .01, 2.11, 2.15, -1.94, -.06, M.frame, false, true);
+    cyl(world, new V3(sx0 + .45, sh, sz0 + .5), new V3(sx0 + .45, sh + 1.0, sz0 + .5), .06, M.stove);   // komínek sauny
+    /* ochlazovací káď */
+    var tub = new THREE.Mesh(new THREE.CylinderGeometry(.58, .52, .95, 24), M.saunaW); tub.position.set(9.2, .05 + .475, 2.2); tub.castShadow = true; world.add(tub);
+    var wat = new THREE.Mesh(new THREE.CircleGeometry(.5, 24), M.water); wat.rotation.x = -Math.PI / 2; wat.position.set(9.2, .05 + .88, 2.2); world.add(wat);
+    /* dvě saunová lehátka */
+    [3.6, 4.7].forEach(function (z) {
+      box(world, 8.6, 10.35, .05 + .22, .05 + .3, z - .3, z + .3, M.light, false, false);           // sedák
+      box(world, 8.6, 10.35, .05, .05 + .22, z - .26, z - .2, M.light); box(world, 8.6, 10.35, .05, .05 + .22, z + .2, z + .26, M.light);
+      var back = new THREE.Mesh(new THREE.BoxGeometry(.7, .07, .6), M.light);
+      back.position.set(10.55, .05 + .45, z); back.rotation.z = .55; back.castShadow = true; world.add(back);
+    });
+  })(gSauna);
+
+  /* ---------- zahrada: tři stromy (jen pro náladu) ---------- */
+  (function (world) {
+    function crown(g, h, mat, mat2) {
+      [[0, .62, 0, .3], [.18, .5, .1, .22], [-.16, .54, -.12, .24], [.02, .78, .04, .2], [-.12, .7, .14, .18]].forEach(function (c, i) {
+        var l = new THREE.Mesh(new THREE.IcosahedronGeometry(h * c[3], 1), i % 2 ? mat2 : mat);
+        l.position.set(c[0] * h, c[1] * h + h * .22, c[2] * h); l.castShadow = true; g.add(l);
+      });
+    }
+    function tree(x, z, h, mat, mat2) {
+      var g = new THREE.Group();
+      var tr = new THREE.Mesh(new THREE.CylinderGeometry(.09 * h / 4, .15 * h / 4, h * .45, 8), M.bark); tr.position.y = h * .22; tr.castShadow = true; g.add(tr);
+      crown(g, h, mat, mat2); g.position.set(x, -.2, z); world.add(g);
+    }
+    function willow(x, z, h) {
+      var g = new THREE.Group();
+      var tr = new THREE.Mesh(new THREE.CylinderGeometry(.16 * h / 5, .3 * h / 5, h * .42, 8), M.bark); tr.position.y = h * .21; tr.castShadow = true; g.add(tr);
+      var dome = new THREE.Mesh(new THREE.IcosahedronGeometry(h * .3, 1), M.leaf2); dome.scale.set(1.15, .7, 1.15); dome.position.y = h * .6; dome.castShadow = true; g.add(dome);
+      for (var i = 0; i < 46; i++) {                       // převislé větve
+        var an = i / 46 * Math.PI * 2 + (i % 3) * .2, rr = h * (.2 + (i % 4) * .06), len = h * (.34 + (i % 5) * .05);
+        var st = new THREE.Mesh(new THREE.CylinderGeometry(.03 * h / 5, .1 * h / 5, len, 5), i % 2 ? M.leaf2 : M.leaf);
+        st.position.set(Math.cos(an) * rr, h * .6 - len / 2 + h * .02, Math.sin(an) * rr); st.castShadow = true; g.add(st);
+      }
+      g.position.set(x, -.2, z); world.add(g);
+    }
+    tree(9.3, 6.9, 8.2, M.leaf, M.leaf2);        // velký strom uprostřed kratší strany terasy (konec do zahrady)
+    tree(-3.6, 9.2, 11.5, M.leaf2, M.leaf);     // největší strom u souseda
+    willow(9.2, 13.2, 7.4);
+    /* obrys pozemku: ~15 m za studiem, plot ze tří stran, na konci smrky uprostřed, lípa vlevo a javor vpravo */
+    var ZE = 32.1;                                                    // konec pozemku: ~22,5 m za studiem
+    var wtex = (function () {
+      var c = document.createElement('canvas'); c.width = c.height = 64; var g = c.getContext('2d');
+      g.strokeStyle = 'rgba(90,98,102,.95)'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(64, 64); g.moveTo(0, 64); g.lineTo(64, 0); g.stroke();
+      var t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; return t;
+    })();
+    function wireFence(xa, za, xb, zb) {                              // drátěný plot 1,6 m se sloupky
+      var len = Math.hypot(xb - xa, zb - za), tx = wtex.clone(); tx.needsUpdate = true; tx.repeat.set(len / .1, 1.6 / .1);
+      var m = new THREE.Mesh(new THREE.PlaneGeometry(len, 1.6), new THREE.MeshBasicMaterial({ map: tx, transparent: true, alphaTest: .2, side: THREE.DoubleSide }));
+      m.position.set((xa + xb) / 2, .6, (za + zb) / 2); m.rotation.y = Math.atan2(xb - xa, zb - za) - Math.PI / 2 + Math.PI; world.add(m);
+      var n = Math.max(1, Math.round(len / 3));
+      for (var i = 0; i <= n; i++) {
+        var px = xa + (xb - xa) * i / n, pz = za + (zb - za) * i / n;
+        var po = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, 1.7, 6), M.frame); po.position.set(px, .65, pz); world.add(po);
+      }
+    }
+    wireFence(12.8, -2, 12.8, ZE); wireFence(-0.8, 4.5, -0.8, ZE); wireFence(-0.8, ZE, 12.8, ZE);
+    function spruce(x, z, h) {
+      var g = new THREE.Group();
+      var tr = new THREE.Mesh(new THREE.CylinderGeometry(.12 * h / 10, .22 * h / 10, h * .25, 8), M.bark); tr.position.y = h * .12; tr.castShadow = true; g.add(tr);
+      for (var i = 0; i < 5; i++) {
+        var r = h * (.26 - i * .045), ch = h * .3;
+        var c = new THREE.Mesh(new THREE.ConeGeometry(r, ch, 12), M.spruce); c.position.y = h * (.2 + i * .17) + ch / 2; c.castShadow = true; g.add(c);
+      }
+      g.position.set(x, -.2, z); world.add(g);
+    }
+    spruce(4.2, 30.9, 13); spruce(6.3, 31.4, 15); spruce(8.3, 30.7, 12.5);
+    tree(-.2, 30.1, 9.5, M.leaf2, M.leaf);                 // lípa vlevo
+    tree(12.0, 30.3, 8.8, M.leaf3, M.leaf2);               // javor vpravo
+    tree(13.6, 3.0, 6.6, M.leaf2, M.leaf); tree(13.4, 8.4, 7.4, M.leaf, M.leaf2); tree(13.7, 12.5, 6.0, M.leaf2, M.leaf);
+
+    [[12.35, 1.6, .5], [12.3, 3.0, .6], [12.4, 4.4, .55], [12.3, 5.9, .65], [12.4, 7.2, .5], [12.3, 8.7, .6], [12.4, 10.4, .55], [12.3, 12.2, .6], [12.35, 14.0, .5], [12.35, 0.2, .45]].forEach(function (b) {
+      var m = new THREE.Mesh(new THREE.IcosahedronGeometry(b[2], 1), M.leaf); m.scale.y = .85; m.position.set(b[0], b[2] * .7 - .2, b[1]); m.castShadow = true; world.add(m);
+    });                      // vrba diagonálně do zahrady od koupelny
+  })(gGarden);
+
+  /* ---------- dřevěná pergola s posezením za studiem (šířka jako studio, hloubka 3,5 m) ---------- */
+  (function (world) {
+    var z0 = L + T, z1 = z0 + 3.5, PH = 2.5;
+    box(world, 0, W, -0.2, 0.05, z0, z1, M.deck, false);
+    [.1, W / 2, W - .1].forEach(function (x) { [z0 + .08, z1 - .1].forEach(function (z) { box(world, x - .08, x + .08, 0.05, PH, z - .08, z + .08, M.raft); }); });
+    [z0 + .08, z1 - .1].forEach(function (z) { box(world, -.05, W + .05, PH, PH + .16, z - .07, z + .07, M.raft); });      // příčné trámy
+    for (var i = 0; i <= 11; i++) { var xx = .05 + (W - .1) * i / 11; box(world, xx - .04, xx + .04, PH + .16, PH + .26, z0, z1 + .1, M.raft, false, false); }   // krokve pergoly
+    for (var j = 0; j < 9; j++) { var zz = z0 + .2 + j * .4; box(world, 0, W, PH + .26, PH + .3, zz, zz + .05, M.light, false, true); }  // lišty
+    /* posezení: stůl se dvěma lavicemi a dvě křesla */
+    box(world, 1.3, 4.2, .72, .77, z0 + 1.45, z0 + 2.3, M.deck, false);
+    [[1.4, z0 + 1.55], [4.1, z0 + 1.55], [1.4, z0 + 2.2], [4.1, z0 + 2.2]].forEach(function (p) { box(world, p[0] - .03, p[0] + .03, 0.05, .72, p[1] - .03, p[1] + .03, M.raft, false, true); });
+    [z0 + 1.05, z0 + 2.7].forEach(function (z) {
+      box(world, 1.2, 4.3, .44, .49, z - .17, z + .17, M.deck, false);
+      [1.3, 4.2].forEach(function (x) { box(world, x - .03, x + .03, 0.05, .44, z - .03, z + .03, M.raft, false, true); });
+    });
+    [[.55, z0 + .8], [.55, z0 + 1.7]].forEach(function (p) { box(world, p[0] - .3, p[0] + .3, .3, .5, p[1] - .3, p[1] + .3, M.light, false, false); box(world, p[0] - .3, p[0] - .22, .5, .95, p[1] - .3, p[1] + .3, M.light, false, false); });
+  })(gPergola);
+
+  /* ---------- střecha (levý svah, pravý je zrcadlo) ---------- */
+  var rafterZ = [];
+  for (var zr2 = .3; zr2 < 8.9; zr2 += .6) rafterZ.push(+zr2.toFixed(2));
+  var skyZ = [[.9, 2.1], [3.3, 4.5]], skyV = [.95 * SQ, 2.05 * SQ];
+  function slope() {
+    var g = new THREE.Group();
+    g.position.set(0, WH, 0); g.rotation.z = PITCH;
+    var holes = skyZ.map(function (s) { return [s[0], s[1], skyV[0], skyV[1]]; });   // [u0,u1,v0,v1], u = z
+    slice(-.4, L + .4, -.6, VR, holes).forEach(function (r) {
+      box(g, r[2], r[3], 0, .2, r[0], r[1], [M.deck, M.deck, M.roof, M.deck, M.deck, M.deck].map(function (m, i) { return i === 2 ? M.roof : (i === 3 ? M.deck : M.deck); }), true);
+    });
+    rafterZ.forEach(function (z) {
+      var inHole = skyZ.some(function (s) { return z > s[0] + .01 && z < s[1] - .01; });
+      if (!inHole) box(g, -.45, VR, -.16, 0, z - .03, z + .03, M.raft);
+    });
+    skyZ.forEach(function (s) {
+      var b = .05, y0 = .04, y1 = .17;
+      box(g, skyV[0], skyV[0] + b, y0, y1, s[0], s[1], M.frame, false, true);
+      box(g, skyV[1] - b, skyV[1], y0, y1, s[0], s[1], M.frame, false, true);
+      box(g, skyV[0], skyV[1], y0, y1, s[0], s[0] + b, M.frame, false, true);
+      box(g, skyV[0], skyV[1], y0, y1, s[1] - b, s[1], M.frame, false, true);
+      box(g, skyV[0], skyV[1], y0, y1, (s[0] + s[1]) / 2 - .025, (s[0] + s[1]) / 2 + .025, M.frame, false, true);
+      var gl = new THREE.Mesh(new THREE.PlaneGeometry(skyV[1] - skyV[0], s[1] - s[0]), M.glass);
+      gl.rotation.x = -Math.PI / 2; gl.rotation.z = -Math.PI / 2;
+      gl.position.set((skyV[0] + skyV[1]) / 2, .1, (s[0] + s[1]) / 2); g.add(gl);
+    });
+    return g;
+  }
+  var sl = slope(); roofG.add(sl);
+  var sr = slope(); sr.position.x = W; sr.scale.x = -1; sr.rotation.z = -PITCH; roofG.add(sr);
+  box(roofG, W / 2 - .18, W / 2 + .18, RIDGE + .2, RIDGE + .32, -.4, L + .4, M.roof);
+  box(roofG, W / 2 - .06, W / 2 + .06, RIDGE - .26, RIDGE, 0, L, M.raft);
+  rafterZ.forEach(function (z, i) {
+        if (i % 3 === 1) { var tx = (4.3 - WH + .16 / Math.cos(PITCH)) / Math.tan(PITCH) - .1; box(roofG, tx, W - tx, 4.23, 4.37, z - .03, z + .03, M.raft); }
+  });
+
+  /* ---------- světla ---------- */
+  var hemi = new THREE.HemisphereLight(0xffffff, 0xb7a98f, .7); scene.add(hemi);
+  var sun = new THREE.DirectionalLight(0xfff1d9, .95);
+  sun.position.set(-7, 15, 3); sun.target.position.set(2.75, 0, 4);   // slunce z jihu (sever je vpravo, k sauně)
+  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+  var sc = sun.shadow.camera; sc.left = -12; sc.right = 12; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 50;
+  sun.shadow.bias = -.0004; sun.shadow.normalBias = .03;
+  scene.add(sun, sun.target);
+  var lamp1 = new THREE.PointLight(0xffc27a, 0, 11, 1.6); lamp1.position.set(2.75, 4.4, 3.8); scene.add(lamp1);
+  var lamp2 = new THREE.PointLight(0xffc27a, 0, 6, 1.6); lamp2.position.set(2.75, 4.0, 8.2); scene.add(lamp2);
+
+  /* ---------- kamera: orbit (venku) a rozhlížení (uvnitř) ---------- */
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = .08; controls.minDistance = 3; controls.maxDistance = 45;
+  controls.maxPolarAngle = Math.PI / 2 - .02;
+  var lookOn = false, yaw = 0, pitch = 0;
+
+  var VIEWS = [
+    { id: 'out',  name: 'Zvenku',      mode: 'orbit', pos: [10, 12.5, 17], tgt: [4.5, 1.6, 3.8], fov: 45, hint: 'Táhni prstem = otáčení, dva prsty = přiblížení a posun.' },
+    { id: 'top',  name: 'Shora',       mode: 'orbit', pos: [6.5, 17.5, 11], tgt: [4.6, 0, 3.8], fov: 45, roof: false, hint: 'Střecha je vypnutá. Táhni = otáčení, dva prsty = přiblížení.' },
+    { id: 'ter',  name: 'Terasa a sauna', show: ['sauna', 'garden', 'house'], mode: 'orbit', pos: [6.2, 5.0, -4.0], tgt: [9.0, .6, 3.2], fov: 50, hint: 'Táhni prstem = otáčení. Vlevo studio, nahoře sauna, na terase lehátka a káď.' },
+    { id: 'dum',  name: 'Dům a terasa', show: ['house'], mode: 'orbit', pos: [8.2, 8.2, 2.4], tgt: [1.4, 1.8, -3.8], fov: 55, hint: 'Dům je jen hrubý vykrojený blok (rozměry odhadem). V zářezu u hranice pozemku je terasa s balkonem.' },
+    { id: 'zah',  name: 'Zahrada', show: ['garden', 'sauna', 'pergola'], mode: 'orbit', pos: [2.5, 24, -5], tgt: [5.5, 0, 22], fov: 62, hint: 'Pozemek: plot, na konci smrky, lípa vlevo a javor vpravo. Vpravo terasa a sauna.' },
+    { id: 'kam',  name: 'Od zahrady',  mode: 'look', pos: [1.6, 1.65, 7.15], tgt: [4.6, 1.6, 0.4], fov: 72, hint: 'Táhni = rozhlížení. Klepnutí na podlahu = přesun tam.' },
+    { id: 'okn',  name: 'K oknům',     mode: 'look', pos: [.6, 1.6, 3.2], tgt: [5.5, 1.5, 3.3], fov: 72, hint: 'Táhni = rozhlížení. Klepnutí na podlahu = přesun tam.' },
+    { id: 'zrc',  name: 'K zrcadlům',  mode: 'look', pos: [5.0, 1.6, 3.6], tgt: [0, 1.4, 3.3], fov: 72, hint: 'Táhni = rozhlížení. Klepnutí na podlahu = přesun tam.' },
+    { id: 'mez2', name: 'Okno mezonetu', mode: 'look', pos: [2.75, 3.9, 7.9], tgt: [2.75, 3.6, 9.3], fov: 80, hint: 'Táhni = rozhlížení. Okno ve štítu nad mezonetem.' },
+    { id: 'mez',  name: 'Z mezonetu',  mode: 'look', pos: [2.75, 4.1, 8.5], tgt: [2.75, 3.0, 0.5], fov: 72, hint: 'Táhni = rozhlížení. Jsi na mezonetu, klepnutí na sál = přesun dolů.' }
+  ];
+  var tween = null, curView = null;
+  function setRoof(v) { roofG.visible = v; sync(); }
+  function goTo(v, instant) {
+    curView = v.id; syncViews();
+    if (v.roof !== undefined) setRoof(v.roof);
+    if (v.show) { v.show.forEach(function (id) { GR[id].visible = true; }); sync(); }
+    document.getElementById('hint').textContent = v.hint;
+    var tmp = new THREE.PerspectiveCamera(); tmp.position.set(v.pos[0], v.pos[1], v.pos[2]); tmp.lookAt(v.tgt[0], v.tgt[1], v.tgt[2]);
+    controls.enabled = false; lookOn = false;
+    tween = { t: 0, dur: instant ? .001 : .95, p0: camera.position.clone(), q0: camera.quaternion.clone(), f0: camera.fov,
+              p1: new V3(v.pos[0], v.pos[1], v.pos[2]), q1: tmp.quaternion.clone(), f1: v.fov, v: v };
+    
+  }
+  function endTween() {
+    var v = tween.v; tween = null;
+    if (v.mode === 'orbit') {
+      controls.target.set(v.tgt[0], v.tgt[1], v.tgt[2]); controls.update(); controls.enabled = true;
+    } else {
+      var e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); yaw = e.y; pitch = e.x; lookOn = true;
+    }
+  }
+
+  /* rozhlížení tažením a štípnutím */
+  var ptrs = {}, pinch0 = 0, fov0 = 0, tapStart = null;
+  var el = renderer.domElement, ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function count() { return Object.keys(ptrs).length; }
+  el.addEventListener('pointerdown', function (e) {
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { el.setPointerCapture(e.pointerId); } catch (x) {}
+    if (count() === 1) tapStart = { x: e.clientX, y: e.clientY, t: performance.now() }; else tapStart = null;
+    if (count() === 2) { var k = Object.keys(ptrs).map(function (i) { return ptrs[i]; }); pinch0 = Math.hypot(k[0].x - k[1].x, k[0].y - k[1].y); fov0 = camera.fov; }
+  });
+  el.addEventListener('pointermove', function (e) {
+    var p = ptrs[e.pointerId]; if (!p) return;
+    var dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (!lookOn || tween) return;
+    if (count() === 1) {
+      var k = camera.fov / 72;
+      yaw += dx * .0048 * k; pitch += dy * .0048 * k;
+      pitch = Math.max(-1.35, Math.min(1.35, pitch));
+    } else if (count() === 2) {
+      var q = Object.keys(ptrs).map(function (i) { return ptrs[i]; });
+      var d = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y);
+      camera.fov = Math.max(30, Math.min(95, fov0 * pinch0 / d)); camera.updateProjectionMatrix();
+    }
+  });
+  function up(e) {
+    if (!ptrs[e.pointerId]) return;
+    var wasOne = count() === 1; delete ptrs[e.pointerId];
+    if (wasOne && tapStart && lookOn && !tween && Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) < 6 && performance.now() - tapStart.t < 350) tap(e.clientX, e.clientY);
+    tapStart = null;
+  }
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  el.addEventListener('wheel', function (e) {
+    if (!lookOn) return; e.preventDefault();
+    camera.fov = Math.max(30, Math.min(95, camera.fov + e.deltaY * .03)); camera.updateProjectionMatrix();
+  }, { passive: false });
+  function tap(cx, cy) {
+    var r = el.getBoundingClientRect();
+    ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    var hit = ray.intersectObjects(floorTargets.filter(function (m) { return m.visible !== false || m === sal; }), false)[0];
+    if (!hit) return;
+    var p = hit.point, onMez = p.y > 1;
+    var x = p.x, z = p.z, y = onMez ? 2.6 : 0;
+    if (onMez) { x = roofG.visible ? Math.max(1.2, Math.min(4.3, x)) : Math.max(.4, Math.min(5.1, x)); z = Math.max(ZP + .4, Math.min(L - .3, z)); }
+    else { x = Math.max(.35, Math.min(W - .35, x)); z = Math.max(.35, Math.min(ZP - .3, z)); }
+    tween = { t: 0, dur: .6, p0: camera.position.clone(), q0: camera.quaternion.clone(), f0: camera.fov,
+              p1: new V3(x, y + 1.6, z), q1: camera.quaternion.clone(), f1: camera.fov, v: { mode: 'look' } };
+    lookOn = false;
+  }
+
+  /* ---------- ovládací prvky ---------- */
+  var viewsEl = document.getElementById('views'), togEl = document.getElementById('toggles');
+  var vBtn = {};
+  VIEWS.forEach(function (v) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = v.name;
+    b.onclick = function () { goTo(v); }; viewsEl.appendChild(b); vBtn[v.id] = b;
+  });
+  function syncViews() { VIEWS.forEach(function (v) { if (curView === v.id) vBtn[v.id].setAttribute('aria-current', 'true'); else vBtn[v.id].removeAttribute('aria-current'); }); }
+  var night = false, whiteWalls = false;
+  var wallMap = M.wall.map, wallBump = M.wall.bumpMap;
+  function applyWalls() {
+    M.wall.map = whiteWalls ? null : wallMap; M.wall.bumpMap = whiteWalls ? null : wallBump;
+    M.wall.color.set(whiteWalls ? '#EDE7DA' : '#ffffff'); M.wall.roughness = whiteWalls ? .95 : .78; M.wall.needsUpdate = true;
+  }
+  var TOG = [
+    { id: 'roof',    name: 'Střecha',             get: function () { return roofG.visible; }, set: function (v) { roofG.visible = v; } },
+    { id: 'chairs',  name: '16 židlí v elipse',   get: function () { return chairs.visible; }, set: function (v) { chairs.visible = v; } },
+    { id: 'curtain', name: 'Závěs na zrcadlech',  get: function () { return curtainWant > .5; }, set: function (v) { curtainWant = v ? 1 : .14; } },
+    { id: 'mez',     name: 'Matrace a lednice',   get: function () { return mez.visible; }, set: function (v) { mez.visible = v; } },
+    { id: 'person',  name: 'Postava 1,75 m',      get: function () { return person.visible; }, set: function (v) { person.visible = v; } },
+    { id: 'white',   name: 'Bílé stěny (místo dřeva)', get: function () { return whiteWalls; }, set: function (v) { whiteWalls = v; applyWalls(); } },
+    { id: 'house',   name: 'Dům a soused',            get: function () { return gHouse.visible; },   set: function (v) { gHouse.visible = v; } },
+    { id: 'sauna',   name: 'Sauna a terasa',          get: function () { return gSauna.visible; },   set: function (v) { gSauna.visible = v; } },
+    { id: 'garden',  name: 'Zahrada (stromy, plot)',  get: function () { return gGarden.visible; },  set: function (v) { gGarden.visible = v; } },
+    { id: 'pergola', name: 'Pergola',                 get: function () { return gPergola.visible; }, set: function (v) { gPergola.visible = v; } },
+    { id: 'only',    name: 'Jen studio (skrýt okolí)', get: function () { return !gHouse.visible && !gSauna.visible && !gGarden.visible && !gPergola.visible; },
+      set: function (v) { gHouse.visible = gSauna.visible = gGarden.visible = gPergola.visible = !v; } },
+    { id: 'night',   name: 'Večer',               get: function () { return night; }, set: function (v) { night = v; applyLight(); } }
+  ];
+  var tBtn = {};
+  TOG.forEach(function (t) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = t.name;
+    b.onclick = function () { t.set(!t.get()); sync(); }; togEl.appendChild(b); tBtn[t.id] = b;
+  });
+  function sync() { TOG.forEach(function (t) { tBtn[t.id].setAttribute('aria-pressed', t.get() ? 'true' : 'false'); }); }
+  function applyLight() {
+    scene.background = night ? skyNight : skyDayTex;
+    scene.fog.color.set(night ? '#1B2230' : '#E3EDEA');
+    hemi.intensity = night ? .2 : .7; sun.intensity = night ? .0 : .95;
+    lamp1.intensity = night ? 1.5 : 0; lamp2.intensity = night ? 1.0 : 0;
+  }
+  sync(); syncViews();
+
+  /* ---------- smyčka ---------- */
+  function resize() {
+    var w = stage.clientWidth, h = stage.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  var last = performance.now();
+  function ease(t) { return t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+  function frame(now) {
+    var dt = Math.min(.05, (now - last) / 1000); last = now;
+    if (tween) {
+      tween.t = Math.min(1, tween.t + dt / tween.dur); var e = ease(tween.t);
+      camera.position.lerpVectors(tween.p0, tween.p1, e);
+      camera.quaternion.copy(tween.q0).slerp(tween.q1, e);
+      camera.fov = tween.f0 + (tween.f1 - tween.f0) * e; camera.updateProjectionMatrix();
+      if (tween.t >= 1) endTween();
+    } else if (lookOn) {
+      camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+    } else if (controls.enabled) controls.update();
+    var d = curtainWant - curtain.scale.z; if (Math.abs(d) > .002) { curtain.scale.z += d * Math.min(1, dt * 5); }
+    mezTop.visible = false;
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  resize();
+  goTo(VIEWS[0], true);
+  window.__studio = { goTo: goTo, VIEWS: VIEWS, TOG: TOG, camera: camera, scene: scene };
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
